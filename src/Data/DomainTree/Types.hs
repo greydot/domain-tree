@@ -45,48 +45,52 @@ instance Sequence LazyText.Text where
   split e = LazyText.split (== e)
 
 data DomainTree k a = DomainTree { sepElem :: Elem k
+                                 , wildCardChunk :: Maybe k
                                  , domainTrees :: [Tree k a]
                                  } deriving (Functor, Foldable, Traversable)
 
 deriving instance (Show (Elem k), Show k, Show a) => Show (DomainTree k a)
 
-data Tree k a = Tree { treeKey :: !k
+data Tree k a = Tree { treeKey :: !(Maybe k)
                      , treeVal :: !(Maybe a)
+                     , isWildcard :: Bool
                      , treeChildren :: [Tree k a]
                      } deriving (Functor, Foldable, Traversable, Show)
 
-empty :: Sequence k => Elem k -> DomainTree k a
-empty s = DomainTree s []
+empty :: Sequence k => Elem k -> Maybe k -> DomainTree k a
+empty s wcc = DomainTree s wcc []
 
 insertChunks :: Eq k => [k] -> a -> DomainTree k a -> DomainTree k a
-insertChunks ks v (DomainTree sep ts) = DomainTree sep $ go ks ts
+insertChunks ks v (DomainTree sep wcc ts) = DomainTree sep wcc $ go ks ts
   where
-    go [] _ = error "empty key sequence"
-    go (c:cs) ts = let (m,o) = partition (\n -> treeKey n == c) ts
+    go [] ts = [Tree Nothing (pure v) False ts]
+    go (c:cs) ts = let (m,o) = partition (\n -> if pure c == wcc then isWildcard n else pure c == treeKey n) ts
                    in case m of
-                        [Tree k' v' children] | null cs -> Tree k' (pure v) children:o
-                                              | otherwise -> Tree k' v' (go cs children):o
-                        [] | null cs -> Tree c (pure v) []:o
-                           | otherwise -> Tree c Nothing (go cs []):o
+                        [Tree k' v' wc children] | null cs -> Tree k' (pure v) wc children:o
+                                                 | otherwise -> Tree k' v' wc (go cs children):o
+                        [] | null cs -> Tree (pure c) (pure v) (pure c == wcc) []:o
+                           | otherwise -> Tree (pure c) Nothing (pure c == wcc) (go cs []):o
                         _ -> error "multiple nodes with the same key found"
 {-# INLINE insertChunks #-}
 
 insert :: Sequence k => k -> a -> DomainTree k a -> DomainTree k a
-insert k v t@(DomainTree sep _) = insertChunks (split sep k) v t
+insert k v t@(DomainTree sep _ _) = insertChunks (split sep k) v t
 {-# INLINE insert #-}
 
-fromList :: Sequence k => Elem k -> [(k,a)] -> DomainTree k a
-fromList sep = foldr (\(k,v) -> insert k v) e
-  where e = empty sep
+fromList :: Sequence k => Elem k -> Maybe k -> [(k,a)] -> DomainTree k a
+fromList sep wcc = foldr (\(k,v) -> insert k v) e
+  where e = empty sep wcc
 {-# INLINE fromList #-}
 
 lookup :: Sequence k => k -> DomainTree k a -> Maybe a
-lookup key (DomainTree sep trees) = go kseq trees
+lookup key (DomainTree sep wcc trees) = go kseq trees
   where
     kseq = split sep key
+    go [] [Tree Nothing v _ _] = v
     go [] _ = Nothing
-    go (c:cs) ts = case filter (\t -> treeKey t == c) ts of
+    go (c:cs) ts = case filter (\t -> isWildcard t || treeKey t == pure c) ts of
                      [] -> Nothing
-                     [Tree k v ts'] | null cs -> v
-                                    | otherwise -> go cs ts'
+                     [Tree k v wc ts'] | null cs -> v
+                                       | otherwise -> go cs ts'
                      _ -> error "multiple nodes with the same key found"
+{-# INLINE lookup #-}

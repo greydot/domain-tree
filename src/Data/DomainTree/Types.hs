@@ -9,7 +9,8 @@ module Data.DomainTree.Types where
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Foldable (toList)
-import Data.List (partition)
+import Data.Function (on)
+import Data.List (partition,sortBy)
 import qualified Data.Text as Text
 import qualified Data.Text.Lazy as LazyText
 import Data.Word (Word8)
@@ -92,5 +93,8 @@ lookup key (DomainTree sep wcc trees) = go kseq trees
                      [] -> Nothing
                      [Tree k v wc ts'] | null cs -> v
                                        | otherwise -> go cs ts'
-                     _ -> error "multiple nodes with the same key found"
+                     rs -> let n = head $ sortBy (compare `on` isWildcard) rs
+                               r | null cs = treeVal n
+                                 | otherwise = go cs $ treeChildren n
+                           in r
 {-# INLINE lookup #-}
